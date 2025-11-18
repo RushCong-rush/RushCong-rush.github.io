@@ -127,7 +127,7 @@
             position: relative;
             transform-style: preserve-3d;
             transition: transform 0.1s ease;
-            transform: rotateX(0deg) rotateY(0deg);
+            /* 初始倾角将通过 JS 动态设置，这里不再硬编码 */
         }
         .cube.alarm {
             border: 3px solid #dc3545;
@@ -187,6 +187,13 @@
     </div>
 
     <script>
+        // ==============================================
+        // 宏定义：初始倾角（只需修改这里，全局自动同步）
+        // ==============================================
+        const INIT_ROTATE_X = 0;  // X轴初始倾角（度）
+        const INIT_ROTATE_Y = 0;  // Y轴初始倾角（度）
+        // ==============================================
+
         // 初始化 ECharts 图表
         const chartDom = document.getElementById('chart-container');
         const myChart = echarts.init(chartDom);
@@ -251,9 +258,10 @@
         let alarmThreshold = 5;
         let isInAlarm = false;
 
-        // 定义初始倾角变量
-        const initialRotateX = 10;
-        const initialRotateY = 20;
+        // 页面加载时，设置立方体初始倾角（同步宏定义的值）
+        window.addEventListener('DOMContentLoaded', () => {
+            cube.style.transform = `rotateX(${INIT_ROTATE_X}deg) rotateY(${INIT_ROTATE_Y}deg)`;
+        });
 
         setAlarmBtn.addEventListener('click', () => {
             const inputValue = parseFloat(alarmThresholdInput.value);
@@ -292,7 +300,8 @@
                 angleValue.textContent = '--.--°';
                 statusText.textContent = '已断开';
                 alarmStatus.textContent = '';
-                cube.style.transform = `rotateX(${initialRotateX}deg) rotateY(${initialRotateY}deg)`;
+                // 断开时重置为初始倾角（使用宏定义的值）
+                cube.style.transform = `rotateX(${INIT_ROTATE_X}deg) rotateY(${INIT_ROTATE_Y}deg)`;
                 angleValue.classList.remove('alarm');
                 cube.classList.remove('alarm');
                 isInAlarm = false;
@@ -320,8 +329,9 @@
                                 const roll = rollInt / 10;
                                 
                                 angleValue.textContent = `${angle.toFixed(1)}°`;
-                                const finalRotateX = initialRotateX + pitch;
-                                const finalRotateY = initialRotateY + roll;
+                                // 旋转时叠加初始倾角（使用宏定义的值）
+                                const finalRotateX = INIT_ROTATE_X + pitch;
+                                const finalRotateY = INIT_ROTATE_Y + roll;
                                 cube.style.transform = `rotateX(${finalRotateX}deg) rotateY(${finalRotateY}deg)`;
 
                                 if (angle > alarmThreshold) {
@@ -387,11 +397,17 @@
                 angleValue.textContent = '--.--°';
                 statusText.textContent = '串口已断开（意外）';
                 alarmStatus.textContent = '';
-                cube.style.transform = `rotateX(${initialRotateX}deg) rotateY(${initialRotateY}deg)`;
+                // 意外断开时重置为初始倾角（使用宏定义的值）
+                cube.style.transform = `rotateX(${INIT_ROTATE_X}deg) rotateY(${INIT_ROTATE_Y}deg)`;
                 angleValue.classList.remove('alarm');
                 cube.classList.remove('alarm');
                 isInAlarm = false;
             }
+        });
+
+        // 图表自适应窗口大小
+        window.addEventListener('resize', () => {
+            myChart.resize();
         });
     </script>
 </body>
