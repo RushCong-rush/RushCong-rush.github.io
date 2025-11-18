@@ -3,13 +3,35 @@
 <head>
     <meta charset="UTF-8">
     <title>MPU6050 姿态实时显示</title>
+    <!-- 引入 ECharts CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/echarts/dist/echarts.min.js"></script>
     <style>
         body {
             font-family: "微软雅黑", Arial;
-            text-align: center;
-            margin: 50px auto;
-            max-width: 1000px;
+            margin: 0;
+            padding: 20px;
             background: #f8f9fa;
+        }
+        .container {
+            display: flex;
+            justify-content: space-between;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        .left-section {
+            flex: 1;
+            text-align: center;
+            padding-right: 20px;
+        }
+        .right-section {
+            width: 500px;
+        }
+        #chart-container {
+            width: 100%;
+            height: 600px;
+            border: 1px solid #eee;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
         }
 
         #connectBtn {
@@ -105,7 +127,6 @@
             position: relative;
             transform-style: preserve-3d;
             transition: transform 0.1s ease;
-            /* 初始倾角：绕X轴10° + 绕Y轴20°，可自定义调整 */
             transform: rotateX(10deg) rotateY(20deg);
         }
         .cube.alarm {
@@ -133,32 +154,88 @@
     </style>
 </head>
 <body>
-    <button id="connectBtn">连接 CH340 串口</button>
+    <div class="container">
+        <div class="left-section">
+            <button id="connectBtn">连接 CH340 串口</button>
 
-    <div class="angle-alarm-container">
-        <div id="angleValue">--.--°</div>
-        <div class="alarm-setting">
-            <label>报警角度阈值 (°)</label>
-            <input type="number" id="alarmThreshold" value="5" min="0" step="0.5">
-            <button id="setAlarmBtn">确认设置</button>
+            <div class="angle-alarm-container">
+                <div id="angleValue">--.--°</div>
+                <div class="alarm-setting">
+                    <label>报警角度阈值 (°)</label>
+                    <input type="number" id="alarmThreshold" value="5" min="0" step="0.5">
+                    <button id="setAlarmBtn">确认设置</button>
+                </div>
+            </div>
+
+            <div id="status">未连接</div>
+            <div id="alarmStatus"></div>
+
+            <div class="cube-container">
+                <div class="cube">
+                    <div class="face front">前</div>
+                    <div class="face back">后</div>
+                    <div class="face left">左</div>
+                    <div class="face right">右</div>
+                    <div class="face top">上</div>
+                    <div class="face bottom">下</div>
+                </div>
+            </div>
         </div>
-    </div>
-
-    <div id="status">未连接</div>
-    <div id="alarmStatus"></div>
-
-    <div class="cube-container">
-        <div class="cube">
-            <div class="face front">前</div>
-            <div class="face back">后</div>
-            <div class="face left">左</div>
-            <div class="face right">右</div>
-            <div class="face top">上</div>
-            <div class="face bottom">下</div>
+        <div class="right-section">
+            <div id="chart-container"></div>
         </div>
     </div>
 
     <script>
+        // 初始化 ECharts 图表
+        const chartDom = document.getElementById('chart-container');
+        const myChart = echarts.init(chartDom);
+
+        // 数据数组初始化
+        let angleData = [];
+        let pitchData = [];
+        let rollData = [];
+        let timeData = [];
+
+        // 图表配置
+        const option = {
+            title: { text: 'MPU6050 角度实时曲线' },
+            tooltip: { trigger: 'axis' },
+            legend: { data: ['Angle', 'Pitch', 'Roll'] },
+            xAxis: {
+                type: 'time',
+                name: '时间'
+            },
+            yAxis: {
+                type: 'value',
+                name: '角度值 (°)',
+                min: -90,
+                max: 90
+            },
+            series: [
+                {
+                    name: 'Angle',
+                    type: 'line',
+                    data: angleData,
+                    itemStyle: { color: '#007bff' }
+                },
+                {
+                    name: 'Pitch',
+                    type: 'line',
+                    data: pitchData,
+                    itemStyle: { color: '#28a745' }
+                },
+                {
+                    name: 'Roll',
+                    type: 'line',
+                    data: rollData,
+                    itemStyle: { color: '#dc3545' }
+                }
+            ]
+        };
+        myChart.setOption(option);
+
+        // 页面交互逻辑
         const connectBtn = document.getElementById('connectBtn');
         const angleValue = document.getElementById('angleValue');
         const statusText = document.getElementById('status');
@@ -174,7 +251,7 @@
         let alarmThreshold = 5;
         let isInAlarm = false;
 
-        // 定义初始倾角变量（与 CSS 保持一致）
+        // 定义初始倾角变量
         const initialRotateX = 10;
         const initialRotateY = 20;
 
@@ -239,12 +316,10 @@
                             
                             if (!isNaN(angleInt) && !isNaN(pitchInt) && !isNaN(rollInt)) {
                                 const angle = angleInt / 10;
-                                const angleShow = angle.toFixed(1);
                                 const pitch = pitchInt / 10;
                                 const roll = rollInt / 10;
                                 
-                                angleValue.textContent = `${angleShow}°`;
-                                // 叠加初始倾角计算最终旋转
+                                angleValue.textContent = `${angle.toFixed(1)}°`;
                                 const finalRotateX = initialRotateX + pitch;
                                 const finalRotateY = initialRotateY + roll;
                                 cube.style.transform = `rotateX(${finalRotateX}deg) rotateY(${finalRotateY}deg)`;
@@ -254,7 +329,7 @@
                                         isInAlarm = true;
                                         angleValue.classList.add('alarm');
                                         cube.classList.add('alarm');
-                                        alarmStatus.textContent = `⚠️ 报警：Angle超过阈值(${alarmThreshold}°)`;
+                                        alarmStatus.textContent = `⚠️ 报警：Angle 超过阈值(${alarmThreshold}°)`;
                                     }
                                 } else {
                                     if (isInAlarm) {
@@ -264,6 +339,30 @@
                                         alarmStatus.textContent = '';
                                     }
                                 }
+
+                                // 更新图表数据
+                                const now = new Date();
+                                timeData.push(now);
+                                angleData.push({ value: [now, angle] });
+                                pitchData.push({ value: [now, pitch] });
+                                rollData.push({ value: [now, roll] });
+
+                                // 只保留最近 100 个数据点
+                                if (angleData.length > 100) {
+                                    angleData.shift();
+                                    pitchData.shift();
+                                    rollData.shift();
+                                    timeData.shift();
+                                }
+
+                                // 刷新图表
+                                myChart.setOption({
+                                    series: [
+                                        { name: 'Angle', data: angleData },
+                                        { name: 'Pitch', data: pitchData },
+                                        { name: 'Roll', data: rollData }
+                                    ]
+                                });
                             }
                         }
                         
