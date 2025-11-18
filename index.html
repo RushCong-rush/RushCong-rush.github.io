@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>MPU6050 姿态实时显示</title>
+    <style>
+        body {
+            font-family: "微软雅黑", Arial;
+            text-align: center;
+            margin: 50px auto;
+            max-width: 1000px;
+            background: #f8f9fa;
+        }
+
+        #connectBtn {
+            padding: 12px 24px;
+            font-size: 18px;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 20px;
+            cursor: pointer;
+            margin-bottom: 30px;
+        }
+        #connectBtn:disabled {
+            background: #6c757d;
+            cursor: not-allowed;
+        }
+
+        .angle-alarm-container {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 50px;
+            margin: 20px 0;
+        }
+
+        #angleValue {
+            font-size: 100px;
+            font-weight: bold;
+            color: #28a745;
+            margin: 0;
+            transition: color 0.3s ease;
+        }
+        #angleValue.alarm {
+            color: #dc3545;
+            animation: blink 1s infinite;
+        }
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
+
+        .alarm-setting {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            align-items: center;
+        }
+        .alarm-setting label {
+            font-size: 18px;
+            color: #666;
+        }
+        #alarmThreshold {
+            width: 80px;
+            padding: 8px;
+            font-size: 16px;
+            text-align: center;
+            border: 2px solid #ddd;
+            border-radius: 6px;
+        }
+        #setAlarmBtn {
+            padding: 8px 16px;
+            font-size: 16px;
+            background: #28a745;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+        }
+        #setAlarmBtn:hover {
+            background: #218838;
+        }
+
+        #status {
+            font-size: 20px;
+            color: #666;
+            margin: 30px 0;
+        }
+        #alarmStatus {
+            font-size: 18px;
+            color: #dc3545;
+            height: 24px;
+        }
+
+        .cube-container {
+            width: 200px;
+            height: 200px;
+            margin: 50px auto;
+            perspective: 1000px;
+        }
+        .cube {
+            width: 100%;
+            height: 100%;
+            position: relative;
+            transform-style: preserve-3d;
+            transition: transform 0.1s ease;
+            /* 初始倾角：绕X轴10° + 绕Y轴20°，可自定义调整 */
+            transform: rotateX(10deg) rotateY(20deg);
+        }
+        .cube.alarm {
+            border: 3px solid #dc3545;
+        }
+        .face {
+            position: absolute;
+            width: 200px;
+            height: 200px;
+            opacity: 0.8;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            font-weight: bold;
+            color: white;
+            border: 2px solid #fff;
+        }
+        .front  { background: #007bff; transform: translateZ(100px); }
+        .back   { background: #28a745; transform: rotateY(180deg) translateZ(100px); }
+        .left   { background: #ffc107; transform: rotateY(-90deg) translateZ(100px); }
+        .right  { background: #dc3545; transform: rotateY(90deg) translateZ(100px); }
+        .top    { background: #17a2b8; transform: rotateX(90deg) translateZ(100px); }
+        .bottom { background: #6c757d; transform: rotateX(-90deg) translateZ(100px); }
+    </style>
+</head>
+<body>
+    <button id="connectBtn">连接 CH340 串口</button>
+
+    <div class="angle-alarm-container">
+        <div id="angleValue">--.--°</div>
+        <div class="alarm-setting">
+            <label>报警角度阈值 (°)</label>
+            <input type="number" id="alarmThreshold" value="5" min="0" step="0.5">
+            <button id="setAlarmBtn">确认设置</button>
+        </div>
+    </div>
+
+    <div id="status">未连接</div>
+    <div id="alarmStatus"></div>
+
+    <div class="cube-container">
+        <div class="cube">
+            <div class="face front">前</div>
+            <div class="face back">后</div>
+            <div class="face left">左</div>
+            <div class="face right">右</div>
+            <div class="face top">上</div>
+            <div class="face bottom">下</div>
+        </div>
+    </div>
+
+    <script>
+        const connectBtn = document.getElementById('connectBtn');
+        const angleValue = document.getElementById('angleValue');
+        const statusText = document.getElementById('status');
+        const alarmStatus = document.getElementById('alarmStatus');
+        const cube = document.querySelector('.cube');
+        const alarmThresholdInput = document.getElementById('alarmThreshold');
+        const setAlarmBtn = document.getElementById('setAlarmBtn');
+        
+        let serialPort;
+        let reader;
+        const decoder = new TextDecoder('utf-8');
+        let dataBuffer = '';
+        let alarmThreshold = 5;
+        let isInAlarm = false;
+
+        // 定义初始倾角变量（与 CSS 保持一致）
+        const initialRotateX = 10;
+        const initialRotateY = 20;
+
+        setAlarmBtn.addEventListener('click', () => {
+            const inputValue = parseFloat(alarmThresholdInput.value);
+            if (!isNaN(inputValue) && inputValue >= 0) {
+                alarmThreshold = inputValue;
+                statusText.textContent = `报警阈值：${alarmThreshold}°`;
+            } else {
+                statusText.textContent = '输入无效，请输入非负数字';
+            }
+        });
+
+        connectBtn.addEventListener('click', async () => {
+            if (!serialPort) {
+                try {
+                    serialPort = await navigator.serial.requestPort();
+                    await serialPort.open({
+                        baudRate: 115200,
+                        dataBits: 8,
+                        stopBits: 1,
+                        parity: 'none'
+                    });
+                    connectBtn.textContent = '断开串口';
+                    statusText.textContent = `已连接串口：${serialPort.getInfo()?.usbProductName || '未知设备'}`;
+                    await readSerialData();
+                } catch (error) {
+                    statusText.textContent = `连接失败：${error.message}`;
+                }
+            } else {
+                if (reader) {
+                    reader.releaseLock();
+                    reader = null;
+                }
+                await serialPort.close();
+                serialPort = null;
+                connectBtn.textContent = '连接 CH340 串口';
+                angleValue.textContent = '--.--°';
+                statusText.textContent = '已断开';
+                alarmStatus.textContent = '';
+                cube.style.transform = `rotateX(${initialRotateX}deg) rotateY(${initialRotateY}deg)`;
+                angleValue.classList.remove('alarm');
+                cube.classList.remove('alarm');
+                isInAlarm = false;
+            }
+        });
+
+        async function readSerialData() {
+            while (serialPort.readable) {
+                reader = serialPort.readable.getReader();
+                try {
+                    while (true) {
+                        const { value, done } = await reader.read();
+                        if (done) break;
+
+                        dataBuffer += decoder.decode(value, { stream: true });
+                        const dataLines = dataBuffer.split('\n');
+                        
+                        for (let i = 0; i < dataLines.length - 1; i++) {
+                            const line = dataLines[i].trim();
+                            const [angleInt, pitchInt, rollInt] = line.split(',').map(Number);
+                            
+                            if (!isNaN(angleInt) && !isNaN(pitchInt) && !isNaN(rollInt)) {
+                                const angle = angleInt / 10;
+                                const angleShow = angle.toFixed(1);
+                                const pitch = pitchInt / 10;
+                                const roll = rollInt / 10;
+                                
+                                angleValue.textContent = `${angleShow}°`;
+                                // 叠加初始倾角计算最终旋转
+                                const finalRotateX = initialRotateX + pitch;
+                                const finalRotateY = initialRotateY + roll;
+                                cube.style.transform = `rotateX(${finalRotateX}deg) rotateY(${finalRotateY}deg)`;
+
+                                if (angle > alarmThreshold) {
+                                    if (!isInAlarm) {
+                                        isInAlarm = true;
+                                        angleValue.classList.add('alarm');
+                                        cube.classList.add('alarm');
+                                        alarmStatus.textContent = `⚠️ 报警：Angle超过阈值(${alarmThreshold}°)`;
+                                    }
+                                } else {
+                                    if (isInAlarm) {
+                                        isInAlarm = false;
+                                        angleValue.classList.remove('alarm');
+                                        cube.classList.remove('alarm');
+                                        alarmStatus.textContent = '';
+                                    }
+                                }
+                            }
+                        }
+                        
+                        dataBuffer = dataLines[dataLines.length - 1];
+                    }
+                } catch (error) {
+                    statusText.textContent = `读取错误：${error.message}`;
+                } finally {
+                    reader.releaseLock();
+                }
+            }
+        }
+
+        navigator.serial.addEventListener('disconnect', () => {
+            if (serialPort) {
+                if (reader) {
+                    reader.releaseLock();
+                    reader = null;
+                }
+                serialPort = null;
+                connectBtn.textContent = '连接 CH340 串口';
+                angleValue.textContent = '--.--°';
+                statusText.textContent = '串口已断开（意外）';
+                alarmStatus.textContent = '';
+                cube.style.transform = `rotateX(${initialRotateX}deg) rotateY(${initialRotateY}deg)`;
+                angleValue.classList.remove('alarm');
+                cube.classList.remove('alarm');
+                isInAlarm = false;
+            }
+        });
+    </script>
+</body>
+</html>
