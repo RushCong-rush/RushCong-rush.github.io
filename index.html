@@ -3,7 +3,6 @@
 <head>
     <meta charset="UTF-8">
     <title>MPU6050 姿态实时显示</title>
-    <!-- 引入 ECharts CDN -->
     <script src="https://cdn.jsdelivr.net/npm/echarts/dist/echarts.min.js"></script>
     <style>
         body {
@@ -43,10 +42,6 @@
             border-radius: 20px;
             cursor: pointer;
             margin-bottom: 30px;
-        }
-        #connectBtn:disabled {
-            background: #6c757d;
-            cursor: not-allowed;
         }
 
         .angle-alarm-container {
@@ -113,6 +108,7 @@
             font-size: 18px;
             color: #dc3545;
             height: 24px;
+            transition: opacity 0.3s ease;
         }
 
         .cube-container {
@@ -127,10 +123,10 @@
             position: relative;
             transform-style: preserve-3d;
             transition: transform 0.1s ease;
-            /* 初始倾角将通过 JS 动态设置，这里不再硬编码 */
         }
         .cube.alarm {
             border: 3px solid #dc3545;
+            transition: border 0.5s ease;  /* 延长边框过渡时间 */
         }
         .face {
             position: absolute;
@@ -187,62 +183,45 @@
     </div>
 
     <script>
-        // ==============================================
-        // 宏定义：初始倾角（只需修改这里，全局自动同步）
-        // ==============================================
-        const INIT_ROTATE_X = 0;  // X轴初始倾角（度）
-        const INIT_ROTATE_Y = 0;  // Y轴初始倾角（度）
-        // ==============================================
+        // 初始倾角参数
+        const INIT_ROTATE_X = 10;
+        const INIT_ROTATE_Y = 10;
+        // 报警防抖延迟（ms）：角度低于阈值后，延迟多久取消报警
+        const ALARM_DELAY = 500;
 
-        // 初始化 ECharts 图表
+        // 初始化图表
         const chartDom = document.getElementById('chart-container');
         const myChart = echarts.init(chartDom);
-
-        // 数据数组初始化
         let angleData = [];
         let pitchData = [];
         let rollData = [];
-        let timeData = [];
+        // 保存上一次有效角度（用于过滤异常值）
+        let lastValidAngle = 0;
+        let lastValidPitch = 0;
+        let lastValidRoll = 0;
 
-        // 图表配置
         const option = {
             title: { text: 'MPU6050 角度实时曲线' },
             tooltip: { trigger: 'axis' },
             legend: { data: ['Angle', 'Pitch', 'Roll'] },
             xAxis: {
                 type: 'time',
-                name: '时间'
-            },
-            yAxis: {
-                type: 'value',
-                name: '角度值 (°)',
-                min: -90,
-                max: 90
-            },
-            series: [
-                {
-                    name: 'Angle',
-                    type: 'line',
-                    data: angleData,
-                    itemStyle: { color: '#007bff' }
-                },
-                {
-                    name: 'Pitch',
-                    type: 'line',
-                    data: pitchData,
-                    itemStyle: { color: '#28a745' }
-                },
-                {
-                    name: 'Roll',
-                    type: 'line',
-                    data: rollData,
-                    itemStyle: { color: '#dc3545' }
+                name: '时间',
+                axisLabel: {
+                    rotate: 45,  // 时间标签旋转45度，避免重叠
+                    interval: 0  // 强制显示所有标签
                 }
+            },
+            yAxis: { type: 'value', name: '角度值 (°)', min: -90, max: 90 },
+            series: [
+                { name: 'Angle', type: 'line', data: angleData, itemStyle: { color: '#007bff' } },
+                { name: 'Pitch', type: 'line', data: pitchData, itemStyle: { color: '#28a745' } },
+                { name: 'Roll', type: 'line', data: rollData, itemStyle: { color: '#dc3545' } }
             ]
         };
         myChart.setOption(option);
 
-        // 页面交互逻辑
+        // 页面元素
         const connectBtn = document.getElementById('connectBtn');
         const angleValue = document.getElementById('angleValue');
         const statusText = document.getElementById('status');
@@ -257,12 +236,14 @@
         let dataBuffer = '';
         let alarmThreshold = 5;
         let isInAlarm = false;
+        let alarmTimer = null;  // 报警防抖定时器
 
-        // 页面加载时，设置立方体初始倾角（同步宏定义的值）
+        // 初始化立方体角度
         window.addEventListener('DOMContentLoaded', () => {
             cube.style.transform = `rotateX(${INIT_ROTATE_X}deg) rotateY(${INIT_ROTATE_Y}deg)`;
         });
 
+        // 阈值设置
         setAlarmBtn.addEventListener('click', () => {
             const inputValue = parseFloat(alarmThresholdInput.value);
             if (!isNaN(inputValue) && inputValue >= 0) {
@@ -273,6 +254,7 @@
             }
         });
 
+        // 串口连接/断开
         connectBtn.addEventListener('click', async () => {
             if (!serialPort) {
                 try {
@@ -284,30 +266,30 @@
                         parity: 'none'
                     });
                     connectBtn.textContent = '断开串口';
-                    statusText.textContent = `已连接串口：${serialPort.getInfo()?.usbProductName || '未知设备'}`;
+                    statusText.textContent = `已连接：${serialPort.getInfo()?.usbProductName || '未知设备'}`;
                     await readSerialData();
                 } catch (error) {
                     statusText.textContent = `连接失败：${error.message}`;
                 }
             } else {
-                if (reader) {
-                    reader.releaseLock();
-                    reader = null;
-                }
+                if (reader) reader.releaseLock();
                 await serialPort.close();
                 serialPort = null;
                 connectBtn.textContent = '连接 CH340 串口';
                 angleValue.textContent = '--.--°';
                 statusText.textContent = '已断开';
                 alarmStatus.textContent = '';
-                // 断开时重置为初始倾角（使用宏定义的值）
                 cube.style.transform = `rotateX(${INIT_ROTATE_X}deg) rotateY(${INIT_ROTATE_Y}deg)`;
                 angleValue.classList.remove('alarm');
                 cube.classList.remove('alarm');
                 isInAlarm = false;
+                clearTimeout(alarmTimer);
             }
         });
 
+        /**
+         * 持续读取串口数据（添加数据校验和报警防抖）
+         */
         async function readSerialData() {
             while (serialPort.readable) {
                 reader = serialPort.readable.getReader();
@@ -317,63 +299,82 @@
                         if (done) break;
 
                         dataBuffer += decoder.decode(value, { stream: true });
-                        const dataLines = dataBuffer.split('\n');
+                        const dataLines = dataBuffer.split(/[\r\n]+/);
                         
                         for (let i = 0; i < dataLines.length - 1; i++) {
-                            const line = dataLines[i].trim();
-                            const [angleInt, pitchInt, rollInt] = line.split(',').map(Number);
-                            
-                            if (!isNaN(angleInt) && !isNaN(pitchInt) && !isNaN(rollInt)) {
-                                const angle = angleInt / 10;
-                                const pitch = pitchInt / 10;
-                                const roll = rollInt / 10;
-                                
-                                angleValue.textContent = `${angle.toFixed(1)}°`;
-                                // 旋转时叠加初始倾角（使用宏定义的值）
-                                const finalRotateX = INIT_ROTATE_X + pitch;
-                                const finalRotateY = INIT_ROTATE_Y + roll;
-                                cube.style.transform = `rotateX(${finalRotateX}deg) rotateY(${finalRotateY}deg)`;
+                            let line = dataLines[i].trim();
+                            if (!line) continue;
 
-                                if (angle > alarmThreshold) {
-                                    if (!isInAlarm) {
-                                        isInAlarm = true;
-                                        angleValue.classList.add('alarm');
-                                        cube.classList.add('alarm');
-                                        alarmStatus.textContent = `⚠️ 报警：Angle 超过阈值(${alarmThreshold}°)`;
-                                    }
-                                } else {
-                                    if (isInAlarm) {
+                            const parts = line.split(',').map(part => part.trim());
+                            if (parts.length !== 3) {
+                                console.warn("参数数量错误，跳过：", line);
+                                continue;
+                            }
+
+                            // 解析并校验角度范围（-90~90°）
+                            const angleInt = parseInt(parts[0], 10);
+                            const pitchInt = parseInt(parts[1], 10);
+                            const rollInt = parseInt(parts[2], 10);
+                            if (isNaN(angleInt) || isNaN(pitchInt) || isNaN(rollInt)) {
+                                console.warn("非数字参数，跳过：", line);
+                                continue;
+                            }
+
+                            // 计算实际角度并过滤异常值（使用上一次有效数据）
+                            let angle = angleInt / 10;
+                            let pitch = pitchInt / 10;
+                            let roll = rollInt / 10;
+
+                            // 角度范围校验（-90~90°）
+                            if (angle < -90 || angle > 90) angle = lastValidAngle;
+                            else lastValidAngle = angle;
+
+                            if (pitch < -90 || pitch > 90) pitch = lastValidPitch;
+                            else lastValidPitch = pitch;
+
+                            if (roll < -90 || roll > 90) roll = lastValidRoll;
+                            else lastValidRoll = roll;
+                            
+                            // 更新UI
+                            angleValue.textContent = `${angle.toFixed(1)}°`;
+                            cube.style.transform = `rotateX(${INIT_ROTATE_X + pitch}deg) rotateY(${INIT_ROTATE_Y + roll}deg)`;
+
+                            // 报警防抖逻辑
+                            if (angle > alarmThreshold) {
+                                // 进入报警状态：清除取消定时器，立即触发报警
+                                clearTimeout(alarmTimer);
+                                if (!isInAlarm) {
+                                    isInAlarm = true;
+                                    angleValue.classList.add('alarm');
+                                    cube.classList.add('alarm');
+                                    alarmStatus.textContent = `⚠️ 报警：超过${alarmThreshold}°`;
+                                }
+                            } else {
+                                // 退出报警状态：延迟ALARM_DELAY后取消报警
+                                if (isInAlarm) {
+                                    alarmTimer = setTimeout(() => {
                                         isInAlarm = false;
                                         angleValue.classList.remove('alarm');
                                         cube.classList.remove('alarm');
                                         alarmStatus.textContent = '';
-                                    }
+                                    }, ALARM_DELAY);
                                 }
-
-                                // 更新图表数据
-                                const now = new Date();
-                                timeData.push(now);
-                                angleData.push({ value: [now, angle] });
-                                pitchData.push({ value: [now, pitch] });
-                                rollData.push({ value: [now, roll] });
-
-                                // 只保留最近 100 个数据点
-                                if (angleData.length > 100) {
-                                    angleData.shift();
-                                    pitchData.shift();
-                                    rollData.shift();
-                                    timeData.shift();
-                                }
-
-                                // 刷新图表
-                                myChart.setOption({
-                                    series: [
-                                        { name: 'Angle', data: angleData },
-                                        { name: 'Pitch', data: pitchData },
-                                        { name: 'Roll', data: rollData }
-                                    ]
-                                });
                             }
+
+                            // 更新图表
+                            const now = new Date();
+                            angleData.push({ value: [now, angle] });
+                            pitchData.push({ value: [now, pitch] });
+                            rollData.push({ value: [now, roll] });
+
+                            // 保留最近100条数据
+                            if (angleData.length > 100) {
+                                angleData.shift();
+                                pitchData.shift();
+                                rollData.shift();
+                            }
+
+                            myChart.setOption({ series: option.series });
                         }
                         
                         dataBuffer = dataLines[dataLines.length - 1];
@@ -386,29 +387,18 @@
             }
         }
 
+        // 监听串口意外断开
         navigator.serial.addEventListener('disconnect', () => {
             if (serialPort) {
-                if (reader) {
-                    reader.releaseLock();
-                    reader = null;
-                }
                 serialPort = null;
                 connectBtn.textContent = '连接 CH340 串口';
-                angleValue.textContent = '--.--°';
                 statusText.textContent = '串口已断开（意外）';
-                alarmStatus.textContent = '';
-                // 意外断开时重置为初始倾角（使用宏定义的值）
-                cube.style.transform = `rotateX(${INIT_ROTATE_X}deg) rotateY(${INIT_ROTATE_Y}deg)`;
-                angleValue.classList.remove('alarm');
-                cube.classList.remove('alarm');
-                isInAlarm = false;
+                clearTimeout(alarmTimer);
             }
         });
 
-        // 图表自适应窗口大小
-        window.addEventListener('resize', () => {
-            myChart.resize();
-        });
+        // 图表自适应
+        window.addEventListener('resize', () => myChart.resize());
     </script>
 </body>
 </html>
